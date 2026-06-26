@@ -8,8 +8,6 @@ PORT=${PORT:-10000}
 cat > "$HERMES_HOME/.env" << ENVEOF
 OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
 GROQ_API_KEY=${GROQ_API_KEY}
-OPENAI_API_KEY=${GROQ_API_KEY}
-OPENAI_BASE_URL=https://api.groq.com/openai/v1
 TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
 TELEGRAM_ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS}
 TELEGRAM_HOME_CHANNEL=${TELEGRAM_HOME_CHANNEL}
@@ -19,15 +17,20 @@ ENVEOF
 
 cat > "$HERMES_HOME/config.yaml" << YAMLEOF
 model:
-  default: "llama-3.1-8b-instant"
-  provider: "openai-api"
+  default: "nousresearch/hermes-3-llama-3.1-405b:free"
+  provider: "openrouter"
+fallback_providers:
+  - provider: "openrouter"
+    model: "nvidia/nemotron-3-super-120b-a12b:free"
+  - provider: "openrouter"
+    model: "meta-llama/llama-3.3-70b-instruct:free"
 terminal:
   backend: "local"
   timeout: 180
 compression:
   enabled: true
-  threshold: 0.25
-  protect_last_n: 6
+  threshold: 0.30
+  protect_last_n: 8
   protect_first_n: 1
 memory:
   enabled: true
