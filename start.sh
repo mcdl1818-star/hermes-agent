@@ -19,7 +19,7 @@ ENVEOF
 
 cat > "$HERMES_HOME/config.yaml" << YAMLEOF
 model:
-  default: "llama-3.3-70b-versatile"
+  default: "llama-3.1-8b-instant"
   provider: "openai-api"
 terminal:
   backend: "local"
