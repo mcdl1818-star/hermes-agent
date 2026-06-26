@@ -17,7 +17,7 @@ ENVEOF
 
 cat > "$HERMES_HOME/config.yaml" << YAMLEOF
 model:
-  default: "qwen/qwen3-next-80b-a3b-instruct:free"
+  default: "meta-llama/llama-3.3-70b-instruct:free"
   provider: "openrouter"
 terminal:
   backend: "local"
