@@ -4,15 +4,13 @@ set -e
 HERMES_HOME="/root/.hermes"
 mkdir -p "$HERMES_HOME"
 
-# Write secrets to .env
+# Write secrets to .env (no webhook URL = polling mode)
 cat > "$HERMES_HOME/.env" << ENVEOF
 OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
 GROQ_API_KEY=${GROQ_API_KEY}
 TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
 TELEGRAM_ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS}
 TELEGRAM_HOME_CHANNEL=${TELEGRAM_HOME_CHANNEL}
-TELEGRAM_WEBHOOK_URL=${TELEGRAM_WEBHOOK_URL}
-TELEGRAM_WEBHOOK_PORT=7860
 SUPABASE_URL=${SUPABASE_URL}
 SUPABASE_KEY=${SUPABASE_KEY}
 ENVEOF
@@ -35,7 +33,21 @@ memory:
   enabled: true
 YAMLEOF
 
-echo "Hermes Agent starting..."
-echo "Webhook URL: ${TELEGRAM_WEBHOOK_URL}"
+echo "Starting health check server on port 7860..."
+# Simple health check server for HuggingFace Spaces
+python3 -c "
+import http.server, threading, os
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'Hermes Agent running')
+    def log_message(self, *a): pass
+httpd = http.server.HTTPServer(('0.0.0.0', 7860), H)
+t = threading.Thread(target=httpd.serve_forever, daemon=True)
+t.start()
+print('Health server up on port 7860')
+" &
 
+echo "Starting Hermes Agent gateway in polling mode..."
 exec hermes gateway run
