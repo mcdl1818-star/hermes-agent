@@ -16,9 +16,15 @@ SUPABASE_KEY=${SUPABASE_KEY}
 ENVEOF
 
 cat > "$HERMES_HOME/config.yaml" << YAMLEOF
-model:
-  default: "groq/llama-3.3-70b-versatile"
-  provider: "groq"
+model: "llama-3.3-70b-versatile"
+providers:
+  groq:
+    name: "Groq"
+    base_url: "https://api.groq.com/openai/v1"
+    api_key: "${GROQ_API_KEY}"
+    models:
+      - "llama-3.3-70b-versatile"
+      - "llama3-8b-8192"
 terminal:
   backend: "local"
   timeout: 180
