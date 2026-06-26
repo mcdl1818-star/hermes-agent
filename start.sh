@@ -8,6 +8,8 @@ PORT=${PORT:-10000}
 cat > "$HERMES_HOME/.env" << ENVEOF
 OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
 GROQ_API_KEY=${GROQ_API_KEY}
+OPENAI_API_KEY=${GROQ_API_KEY}
+OPENAI_BASE_URL=https://api.groq.com/openai/v1
 TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
 TELEGRAM_ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS}
 TELEGRAM_HOME_CHANNEL=${TELEGRAM_HOME_CHANNEL}
@@ -16,15 +18,9 @@ SUPABASE_KEY=${SUPABASE_KEY}
 ENVEOF
 
 cat > "$HERMES_HOME/config.yaml" << YAMLEOF
-model: "llama-3.3-70b-versatile"
-providers:
-  groq:
-    name: "Groq"
-    base_url: "https://api.groq.com/openai/v1"
-    api_key: "${GROQ_API_KEY}"
-    models:
-      - "llama-3.3-70b-versatile"
-      - "llama3-8b-8192"
+model:
+  default: "llama-3.3-70b-versatile"
+  provider: "openai-api"
 terminal:
   backend: "local"
   timeout: 180
