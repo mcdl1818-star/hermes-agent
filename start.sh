@@ -3,6 +3,7 @@
 HERMES_HOME="/root/.hermes"
 mkdir -p "$HERMES_HOME"
 LOGFILE="/tmp/hermes.log"
+PORT=${PORT:-10000}
 
 cat > "$HERMES_HOME/.env" << ENVEOF
 OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
@@ -10,9 +11,6 @@ GROQ_API_KEY=${GROQ_API_KEY}
 TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
 TELEGRAM_ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS}
 TELEGRAM_HOME_CHANNEL=${TELEGRAM_HOME_CHANNEL}
-TELEGRAM_WEBHOOK_URL=${TELEGRAM_WEBHOOK_URL}
-TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET}
-WEBHOOK_PORT=8644
 SUPABASE_URL=${SUPABASE_URL}
 SUPABASE_KEY=${SUPABASE_KEY}
 ENVEOF
@@ -31,10 +29,11 @@ memory:
   enabled: true
 YAMLEOF
 
-# Health + log server on port 7860
-python3 << 'PYEOF' &
-import http.server, urllib.request
+# Health + log server
+python3 << PYEOF &
+import http.server, os
 
+PORT = int(os.environ.get("PORT", 10000))
 LOGFILE = "/tmp/hermes.log"
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -52,28 +51,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"Hermes Agent OK")
-
-    def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(length)
-        try:
-            req = urllib.request.Request(
-                f"http://localhost:8644{self.path}",
-                data=body, headers=dict(self.headers), method="POST"
-            )
-            resp = urllib.request.urlopen(req, timeout=30)
-            self.send_response(resp.status)
-            self.end_headers()
-            self.wfile.write(resp.read())
-        except Exception as e:
-            self.send_response(502)
-            self.end_headers()
-            self.wfile.write(str(e).encode())
-
     def log_message(self, *a): pass
 
-print("Server on :7860")
-http.server.HTTPServer(("0.0.0.0", 7860), Handler).serve_forever()
+print(f"Health server on :{PORT}")
+http.server.HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 PYEOF
 
 sleep 2
@@ -81,5 +62,4 @@ echo "Starting Hermes..." | tee "$LOGFILE"
 hermes gateway >> "$LOGFILE" 2>&1 &
 echo "Hermes PID: $!" | tee -a "$LOGFILE"
 
-# Keep alive
 tail -f "$LOGFILE"
