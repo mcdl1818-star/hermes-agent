@@ -17,8 +17,8 @@ ENVEOF
 
 cat > "$HERMES_HOME/config.yaml" << YAMLEOF
 model:
-  default: "meta-llama/llama-3.3-70b-instruct:free"
-  provider: "openrouter"
+  default: "groq/llama-3.3-70b-versatile"
+  provider: "groq"
 terminal:
   backend: "local"
   timeout: 180
