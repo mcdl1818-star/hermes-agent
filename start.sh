@@ -38,4 +38,4 @@ YAMLEOF
 echo "Hermes Agent starting..."
 echo "Webhook URL: ${TELEGRAM_WEBHOOK_URL}"
 
-exec hermes gateway --port 7860 --host 0.0.0.0
+exec hermes gateway run
