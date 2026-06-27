@@ -12,7 +12,7 @@ RUN git clone --depth=1 https://github.com/NousResearch/hermes-agent.git /hermes
 
 WORKDIR /hermes-agent
 
-RUN uv pip install --system -e ".[all]" --no-cache
+RUN uv pip install --system -e ".[messaging,cli]" --no-cache
 
 RUN mkdir -p /root/.hermes
 
