@@ -31,6 +31,8 @@ cat > "$HERMES_HOME/config.yaml" << YAMLEOF
 max_live_sessions: 2
 max_concurrent_sessions: 2
 timezone: "Asia/Jerusalem"
+agent:
+  reasoning_effort: "low"
 gateway:
   message_timestamps:
     enabled: true
