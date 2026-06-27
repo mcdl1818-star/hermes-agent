@@ -20,17 +20,30 @@ ENVEOF
 
 cat > "$HERMES_HOME/config.yaml" << YAMLEOF
 model:
-  default: "llama-3.3-70b"
+  default: "gpt-oss-120b"
   provider: "openai-api"
 fallback_providers:
-  - provider: "openrouter"
-    model: "meta-llama/llama-3.3-70b-instruct:free"
+  - provider: "openai-api"
+    model: "zai-glm-4.7"
+auxiliary:
+  title_generation:
+    provider: "openai-api"
+    model: "gpt-oss-120b"
+  compression:
+    provider: "openai-api"
+    model: "gpt-oss-120b"
+  vision:
+    provider: "openai-api"
+    model: "gpt-oss-120b"
+  web_extract:
+    provider: "openai-api"
+    model: "gpt-oss-120b"
 terminal:
   backend: "local"
   timeout: 180
 compression:
   enabled: true
-  threshold: 0.30
+  threshold: 0.40
   protect_last_n: 8
   protect_first_n: 1
 memory:
