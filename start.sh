@@ -83,8 +83,40 @@ print(f"Health server on :{PORT}")
 http.server.HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 PYEOF
 
+# --- Persistent memory: restore Hermes state from Supabase on boot ---
+# Render free tier has no persistent disk, so ~/.hermes/state.db is wiped on
+# every restart/deploy. We back it up to Supabase Storage and restore here so
+# the assistant's long-term memory and conversation history survive restarts.
+SUPA_OBJ="${SUPABASE_URL}/storage/v1/object/hermes-state/state.db"
+echo "Restoring memory from Supabase..." | tee -a "$LOGFILE"
+HTTP=$(curl -s -w "%{http_code}" -o "$HERMES_HOME/state.db" \
+  -H "Authorization: Bearer ${SUPABASE_KEY}" -H "apikey: ${SUPABASE_KEY}" \
+  "$SUPA_OBJ")
+if [ "$HTTP" = "200" ]; then
+  echo "Memory restored from Supabase ($(stat -c%s "$HERMES_HOME/state.db" 2>/dev/null) bytes)" | tee -a "$LOGFILE"
+else
+  echo "No prior memory found (HTTP $HTTP) - starting fresh" | tee -a "$LOGFILE"
+  rm -f "$HERMES_HOME/state.db"
+fi
+
+# --- Background loop: back up state.db to Supabase every 2 minutes ---
+(
+  while true; do
+    sleep 120
+    if [ -f "$HERMES_HOME/state.db" ]; then
+      # Consistent snapshot via SQLite backup API (safe during live writes)
+      python3 -c "import sqlite3; s=sqlite3.connect('$HERMES_HOME/state.db'); d=sqlite3.connect('/tmp/state_backup.db'); s.backup(d); d.close(); s.close()" 2>>"$LOGFILE" && \
+      curl -s -X POST \
+        -H "Authorization: Bearer ${SUPABASE_KEY}" -H "apikey: ${SUPABASE_KEY}" \
+        -H "x-upsert: true" -H "Content-Type: application/octet-stream" \
+        --data-binary "@/tmp/state_backup.db" "$SUPA_OBJ" >/dev/null 2>&1 && \
+      echo "Memory backed up to Supabase ($(date '+%H:%M:%S'))" >> "$LOGFILE"
+    fi
+  done
+) &
+
 sleep 2
-echo "Starting Hermes..." | tee "$LOGFILE"
+echo "Starting Hermes..." | tee -a "$LOGFILE"
 hermes gateway >> "$LOGFILE" 2>&1 &
 echo "Hermes PID: $!" | tee -a "$LOGFILE"
 tail -f "$LOGFILE"
