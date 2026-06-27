@@ -1,5 +1,14 @@
 #!/bin/bash
 
+# Memory tuning for 512MB container: limit glibc malloc arenas (threaded
+# Python otherwise spawns many per-thread arenas that inflate RSS) and trim
+# freed memory back to the OS aggressively. Classic fix for Python OOM in
+# small containers - typically saves 100-200MB RSS.
+export MALLOC_ARENA_MAX=2
+export MALLOC_TRIM_THRESHOLD_=100000
+export PYTHONMALLOC=malloc
+export PYTHONUNBUFFERED=1
+
 HERMES_HOME="/root/.hermes"
 mkdir -p "$HERMES_HOME"
 LOGFILE="/tmp/hermes.log"
@@ -19,6 +28,8 @@ SUPABASE_KEY=${SUPABASE_KEY}
 ENVEOF
 
 cat > "$HERMES_HOME/config.yaml" << YAMLEOF
+max_live_sessions: 2
+max_concurrent_sessions: 2
 model:
   default: "gpt-oss-120b"
   provider: "openai-api"
