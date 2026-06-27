@@ -30,6 +30,10 @@ ENVEOF
 cat > "$HERMES_HOME/config.yaml" << YAMLEOF
 max_live_sessions: 2
 max_concurrent_sessions: 2
+timezone: "Asia/Jerusalem"
+gateway:
+  message_timestamps:
+    enabled: true
 model:
   default: "gpt-oss-120b"
   provider: "openai-api"
@@ -54,9 +58,9 @@ terminal:
   timeout: 180
 compression:
   enabled: true
-  threshold: 0.40
-  protect_last_n: 8
-  protect_first_n: 1
+  threshold: 0.20
+  protect_last_n: 10
+  protect_first_n: 2
 memory:
   enabled: true
 YAMLEOF
