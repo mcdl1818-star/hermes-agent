@@ -31,6 +31,19 @@ cat > "$HERMES_HOME/config.yaml" << YAMLEOF
 max_live_sessions: 2
 max_concurrent_sessions: 2
 timezone: "Asia/Jerusalem"
+toolsets:
+  - "hermes-cli"
+  - "web"
+  - "skills"
+  - "todo"
+  - "memory"
+  - "session_search"
+  - "clarify"
+  - "cronjob"
+  - "file"
+web:
+  search_backend: "ddgs"
+  extract_backend: "ddgs"
 agent:
   reasoning_effort: "low"
   max_turns: 18

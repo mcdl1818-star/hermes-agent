@@ -14,6 +14,9 @@ WORKDIR /hermes-agent
 
 RUN uv pip install --system -e ".[messaging,cli]" --no-cache
 
+# Free web search backend (DuckDuckGo, no API key needed) for productivity skills
+RUN uv pip install --system ddgs --no-cache
+
 RUN mkdir -p /root/.hermes
 
 COPY start.sh /start.sh
