@@ -71,9 +71,9 @@ terminal:
   timeout: 180
 compression:
   enabled: true
-  threshold: 0.20
-  protect_last_n: 10
-  protect_first_n: 2
+  threshold: 0.15
+  protect_last_n: 6
+  protect_first_n: 1
 memory:
   enabled: true
 YAMLEOF
