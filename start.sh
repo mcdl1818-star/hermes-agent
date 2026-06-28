@@ -33,6 +33,9 @@ max_concurrent_sessions: 2
 timezone: "Asia/Jerusalem"
 agent:
   reasoning_effort: "low"
+  max_turns: 18
+  gateway_timeout: 240
+  api_max_retries: 2
 gateway:
   message_timestamps:
     enabled: true
