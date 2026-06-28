@@ -62,8 +62,17 @@ stt:
   enabled: true
   provider: "groq"
 fallback_providers:
+  # Different provider (Groq) with its OWN daily quota - when Cerebras hits its
+  # daily/minute token limit, fail over here instead of dying. Small requests
+  # (~5K tokens after compression) fit Groq's 12K TPM comfortably.
   - provider: "openai-api"
-    model: "zai-glm-4.7"
+    model: "llama-3.3-70b-versatile"
+    base_url: "https://api.groq.com/openai/v1"
+    api_key: "${GROQ_API_KEY}"
+  - provider: "openai-api"
+    model: "llama-3.1-8b-instant"
+    base_url: "https://api.groq.com/openai/v1"
+    api_key: "${GROQ_API_KEY}"
 auxiliary:
   # Background tasks routed to Groq (separate rate-limit bucket from Cerebras),
   # so they never compete with user-facing responses for Cerebras's 5 RPM.
