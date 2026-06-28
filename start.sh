@@ -116,6 +116,12 @@ cat > "$HERMES_HOME/SOUL.md" << 'SOULEOF'
 - אל תשאל שאלות אישור מיותרות. אם הבקשה ברורה - בצע מיד. למשל "תזכיר לי עוד 3 דקות" = קבע תזכורת מיד ואשר בקצרה, בלי לשאול "האם אתה רוצה טיימר?".
 - שאל רק כשבאמת חסר מידע קריטי שאי אפשר לנחש (למשל זמן לא ברור לגמרי).
 
+## תזכורות - דיוק קריטי
+- כשמבקשים תזכורת, חשב את הזמן המדויק לפי השעה הנוכחית (אזור זמן ישראל) וקבע אותה מיד דרך כלי ה-cron.
+- אשר בקצרה עם **השעה המדויקת** שבה התזכורת תישלח. לדוגמה: "קבעתי. אזכיר לך ב-14:35".
+- ודא שהחישוב נכון: "עוד 5 דקות" = השעה הנוכחית + 5 דקות בדיוק. אל תטעה בחישוב.
+- כשהתזכורת מגיעה, שלח הודעה ברורה וקצרה עם תוכן התזכורת.
+
 ## זיכרון
 זכור פרטים שמרדכי מספר על עצמו, העדפותיו, ומשימות חוזרות. השתמש בזיכרון כדי להכיר אותו לאורך זמן.
 SOULEOF
@@ -154,6 +160,20 @@ else
   rm -f "$HERMES_HOME/state.db"
 fi
 
+# Restore scheduled reminders (cron jobs.json) - separate file from state.db,
+# otherwise every restart wipes all the user's reminders.
+SUPA_CRON="${SUPABASE_URL}/storage/v1/object/hermes-state/jobs.json"
+mkdir -p "$HERMES_HOME/cron"
+HTTPC=$(curl -s -w "%{http_code}" -o "$HERMES_HOME/cron/jobs.json" \
+  -H "Authorization: Bearer ${SUPABASE_KEY}" -H "apikey: ${SUPABASE_KEY}" \
+  "$SUPA_CRON")
+if [ "$HTTPC" = "200" ]; then
+  echo "Reminders restored from Supabase" | tee -a "$LOGFILE"
+else
+  echo "No prior reminders (HTTP $HTTPC)" | tee -a "$LOGFILE"
+  rm -f "$HERMES_HOME/cron/jobs.json"
+fi
+
 # --- Background loop: back up state.db to Supabase every 2 minutes ---
 (
   while true; do
@@ -166,6 +186,13 @@ fi
         -H "x-upsert: true" -H "Content-Type: application/octet-stream" \
         --data-binary "@/tmp/state_backup.db" "$SUPA_OBJ" >/dev/null 2>&1 && \
       echo "Memory backed up to Supabase ($(date '+%H:%M:%S'))" >> "$LOGFILE"
+    fi
+    # Back up scheduled reminders (jobs.json) so they survive restarts
+    if [ -f "$HERMES_HOME/cron/jobs.json" ]; then
+      curl -s -X POST \
+        -H "Authorization: Bearer ${SUPABASE_KEY}" -H "apikey: ${SUPABASE_KEY}" \
+        -H "x-upsert: true" -H "Content-Type: application/json" \
+        --data-binary "@$HERMES_HOME/cron/jobs.json" "$SUPA_CRON" >/dev/null 2>&1
     fi
   done
 ) &
