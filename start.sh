@@ -46,9 +46,17 @@ fallback_providers:
   - provider: "openai-api"
     model: "zai-glm-4.7"
 auxiliary:
+  # Background tasks routed to Groq (separate rate-limit bucket from Cerebras),
+  # so they never compete with user-facing responses for Cerebras's 5 RPM.
+  background_review:
+    base_url: "https://api.groq.com/openai/v1"
+    api_key: "${GROQ_API_KEY}"
+    model: "llama-3.3-70b-versatile"
   title_generation:
-    provider: "openai-api"
-    model: "gpt-oss-120b"
+    base_url: "https://api.groq.com/openai/v1"
+    api_key: "${GROQ_API_KEY}"
+    model: "llama-3.1-8b-instant"
+  # Compression handles large contexts - keep on Cerebras (30K TPM headroom).
   compression:
     provider: "openai-api"
     model: "gpt-oss-120b"
