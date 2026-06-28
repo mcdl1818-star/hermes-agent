@@ -19,6 +19,10 @@ RUN uv pip install --system ddgs --no-cache
 
 RUN mkdir -p /root/.hermes
 
+# Patch Groq STT to force Hebrew transcription (Groq API accepts language; Hermes omits it)
+COPY patch_stt.py /patch_stt.py
+RUN python3 /patch_stt.py
+
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
 

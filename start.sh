@@ -8,6 +8,7 @@ export MALLOC_ARENA_MAX=2
 export MALLOC_TRIM_THRESHOLD_=100000
 export PYTHONMALLOC=malloc
 export PYTHONUNBUFFERED=1
+export STT_LANGUAGE=he
 
 HERMES_HOME="/root/.hermes"
 mkdir -p "$HERMES_HOME"
