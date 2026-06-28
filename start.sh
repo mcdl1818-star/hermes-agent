@@ -87,8 +87,8 @@ terminal:
   timeout: 180
 compression:
   enabled: true
-  threshold: 0.30
-  protect_last_n: 6
+  threshold: 0.10
+  protect_last_n: 4
   protect_first_n: 1
 memory:
   enabled: true
