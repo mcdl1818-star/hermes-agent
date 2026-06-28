@@ -55,7 +55,7 @@ gateway:
 model:
   default: "gpt-oss-120b"
   provider: "openai-api"
-  context_length: 16000
+  context_length: 64000
 stt:
   enabled: true
   provider: "groq"
@@ -88,7 +88,7 @@ terminal:
   timeout: 180
 compression:
   enabled: true
-  threshold: 0.6
+  threshold: 0.30
   protect_last_n: 6
   protect_first_n: 1
 memory:
