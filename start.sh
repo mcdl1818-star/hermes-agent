@@ -42,6 +42,10 @@ gateway:
 model:
   default: "gpt-oss-120b"
   provider: "openai-api"
+  context_length: 16000
+stt:
+  enabled: true
+  provider: "groq"
 fallback_providers:
   - provider: "openai-api"
     model: "zai-glm-4.7"
@@ -71,7 +75,7 @@ terminal:
   timeout: 180
 compression:
   enabled: true
-  threshold: 0.15
+  threshold: 0.6
   protect_last_n: 6
   protect_first_n: 1
 memory:
