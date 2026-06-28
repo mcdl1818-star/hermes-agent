@@ -35,12 +35,9 @@ timezone: "Asia/Jerusalem"
 toolsets:
   - "hermes-cli"
   - "web"
-  - "skills"
   - "todo"
   - "memory"
-  - "session_search"
   - "cronjob"
-  - "file"
 web:
   search_backend: "ddgs"
   extract_backend: "ddgs"
