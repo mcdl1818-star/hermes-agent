@@ -1,7 +1,7 @@
 """
 מרדי - עוזר אישי עברי מתקדם בטלגרם.
-קריאת LLM אחת להודעה (שתיים בחיפוש) + רוטציית ספקים חינמיים, תמלול עברי (Groq Whisper),
-זיכרון קבוע + תזכורות עם כפתורי דחייה (Supabase), חיפוש אינטרנט, יצירת תמונות (FLUX).
+Function-calling אמין (תזכורות/תמונות/חיפוש/זיכרון) + רוטציית ספקים חינמיים,
+תמלול עברי (Groq Whisper), זיכרון קבוע + תזכורות עם כפתורי דחייה (Supabase), תמונות FLUX.
 """
 import os
 import re
@@ -9,7 +9,6 @@ import json
 import asyncio
 import logging
 import secrets
-from urllib.parse import quote
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -24,7 +23,6 @@ ALLOWED_USER = int(os.environ.get("TELEGRAM_ALLOWED_USERS", "0"))
 SUPA_URL = os.environ["SUPABASE_URL"].rstrip("/")
 SUPA_KEY = os.environ["SUPABASE_KEY"]
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
-PORT = int(os.environ.get("PORT", "10000"))
 TZ = ZoneInfo("Asia/Jerusalem")
 
 TG_API = f"https://api.telegram.org/bot{TG_TOKEN}"
@@ -41,6 +39,7 @@ if NVIDIA_KEY:
     PROVIDERS.append(("nvidia", "https://integrate.api.nvidia.com/v1", NVIDIA_KEY, "meta/llama-3.3-70b-instruct"))
 
 IMAGE_MODELS = ["black-forest-labs/FLUX.1-schnell", "stabilityai/stable-diffusion-xl-base-1.0"]
+DIMS = {"square": (1024, 1024), "portrait": (832, 1216), "landscape": (1216, 832)}
 MAX_HISTORY = 24
 
 app = FastAPI()
@@ -48,8 +47,35 @@ mem_lock = asyncio.Lock()
 rem_lock = asyncio.Lock()
 client: httpx.AsyncClient = None
 
+TOOLS = [
+    {"type": "function", "function": {
+        "name": "set_reminder",
+        "description": "קבע תזכורת למרדכי. השתמש בזה תמיד כשמרדכי מבקש שתזכיר לו משהו.",
+        "parameters": {"type": "object", "properties": {
+            "when": {"type": "string", "description": "לזמן יחסי: '+דקות' (למשל '+5' לחמש דקות, '+120' לשעתיים). לזמן מוחלט: ISO 'YYYY-MM-DDTHH:MM'."},
+            "text": {"type": "string", "description": "מה להזכיר, קצר ובעברית"},
+        }, "required": ["when", "text"]}}},
+    {"type": "function", "function": {
+        "name": "generate_image",
+        "description": "צור תמונה כשמרדכי מבקש תמונה/ציור/צילום.",
+        "parameters": {"type": "object", "properties": {
+            "prompt": {"type": "string", "description": "תיאור מפורט באנגלית. אם ריאליסטי - הוסף photorealistic, ultra detailed, DSLR."},
+            "orientation": {"type": "string", "enum": ["square", "portrait", "landscape"]},
+        }, "required": ["prompt"]}}},
+    {"type": "function", "function": {
+        "name": "web_search",
+        "description": "חפש מידע עדכני באינטרנט (חדשות, מזג אוויר, מחירים, ספורט, אירועים, כל דבר שמשתנה או שאינך בטוח בו).",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string"}}, "required": ["query"]}}},
+    {"type": "function", "function": {
+        "name": "save_fact",
+        "description": "שמור עובדה קבועה וחשובה על מרדכי לזיכרון ארוך-טווח (שם, משפחה, עבודה, העדפות, אנשים, תאריכים).",
+        "parameters": {"type": "object", "properties": {
+            "fact": {"type": "string"}}, "required": ["fact"]}}},
+]
 
-# ---------- Supabase JSON storage ----------
+
+# ---------- Supabase storage ----------
 async def _load(name, default):
     try:
         r = await client.get(f"{BUCKET}/{name}", headers=SUPA_HEADERS, timeout=15)
@@ -69,22 +95,25 @@ async def _save(name, data):
         log.warning("save %s: %s", name, e)
 
 
-# ---------- LLM rotation ----------
-async def llm(messages):
+# ---------- LLM (returns full message; supports tools) ----------
+async def llm_call(messages, tools=None):
+    body = {"messages": messages, "temperature": 0.5, "max_tokens": 1200}
+    if tools:
+        body["tools"] = tools
+        body["tool_choice"] = "auto"
     for name, base, key, model in PROVIDERS:
         if not key:
             continue
         try:
             r = await client.post(f"{base}/chat/completions",
                                   headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                                  json={"model": model, "messages": messages, "temperature": 0.6, "max_tokens": 1200},
-                                  timeout=60)
+                                  json={**body, "model": model}, timeout=60)
             if r.status_code == 200:
-                return r.json()["choices"][0]["message"]["content"].strip()
-            log.warning("provider %s: %s %s", name, r.status_code, r.text[:100])
+                return r.json()["choices"][0]["message"]
+            log.warning("provider %s: %s %s", name, r.status_code, r.text[:120])
         except Exception as e:
             log.warning("provider %s err: %s", name, e)
-    return "סליחה, כל הספקים תפוסים כרגע. נסה שוב עוד רגע."
+    return {"role": "assistant", "content": "סליחה, כל הספקים תפוסים כרגע. נסה שוב עוד רגע."}
 
 
 # ---------- Web search ----------
@@ -95,7 +124,7 @@ async def web_search(q):
             with DDGS() as d:
                 return list(d.text(q, max_results=6, region="il-he"))
         except Exception as e:
-            log.warning("search err: %s", e)
+            log.warning("search: %s", e)
             return []
     res = await asyncio.to_thread(_s)
     if not res:
@@ -103,22 +132,15 @@ async def web_search(q):
     return "\n".join(f"- {r.get('title','')}: {r.get('body','')}" for r in res[:6])
 
 
-# ---------- Image generation (FLUX via HuggingFace) ----------
-DIMS = {"square": (1024, 1024), "portrait": (832, 1216), "landscape": (1216, 832)}
-QUALITY = ", highly detailed, sharp focus, professional, cinematic lighting, 8k"
-REALISM = ", photorealistic, ultra realistic, DSLR photo, natural lighting, lifelike, high detail"
-
-
+# ---------- Image (FLUX) ----------
 async def gen_image(prompt, orientation="square"):
     w, h = DIMS.get(orientation, DIMS["square"])
-    low = prompt.lower()
-    full = prompt + (REALISM if any(k in low for k in ("photo", "realis", "real ", "person", "portrait", "man", "woman", "face")) else QUALITY)
     for model in IMAGE_MODELS:
-        for attempt in range(3):
+        for _ in range(3):
             try:
                 r = await client.post(f"https://router.huggingface.co/hf-inference/models/{model}",
                                       headers={"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"},
-                                      json={"inputs": full, "parameters": {"width": w, "height": h}}, timeout=120)
+                                      json={"inputs": prompt, "parameters": {"width": w, "height": h}}, timeout=120)
                 if r.status_code == 200 and r.content[:2] in (b"\xff\xd8", b"\x89P"):
                     return r.content
                 if r.status_code == 503:
@@ -129,10 +151,10 @@ async def gen_image(prompt, orientation="square"):
             except Exception as e:
                 log.warning("img %s err: %s", model, e)
                 break
-    raise RuntimeError("image gen failed")
+    raise RuntimeError("image failed")
 
 
-# ---------- Groq Whisper STT ----------
+# ---------- STT ----------
 async def transcribe(ogg):
     key = os.environ.get("GROQ_API_KEY", "")
     if not key:
@@ -141,8 +163,7 @@ async def transcribe(ogg):
         r = await client.post("https://api.groq.com/openai/v1/audio/transcriptions",
                               headers={"Authorization": f"Bearer {key}"},
                               files={"file": ("v.ogg", ogg, "audio/ogg")},
-                              data={"model": "whisper-large-v3", "language": "he", "response_format": "text"},
-                              timeout=60)
+                              data={"model": "whisper-large-v3", "language": "he", "response_format": "text"}, timeout=60)
         if r.status_code == 200:
             return r.text.strip()
         log.warning("STT %s: %s", r.status_code, r.text[:100])
@@ -153,20 +174,19 @@ async def transcribe(ogg):
 
 # ---------- Telegram ----------
 async def tg_send(chat_id, text, buttons=None):
-    payload = {"chat_id": chat_id, "text": text}
+    p = {"chat_id": chat_id, "text": text}
     if buttons:
-        payload["reply_markup"] = {"inline_keyboard": buttons}
+        p["reply_markup"] = {"inline_keyboard": buttons}
     try:
-        await client.post(f"{TG_API}/sendMessage", json=payload, timeout=20)
+        await client.post(f"{TG_API}/sendMessage", json=p, timeout=20)
     except Exception as e:
         log.warning("send: %s", e)
 
 
 async def tg_photo(chat_id, img, caption=""):
     try:
-        await client.post(f"{TG_API}/sendPhoto",
-                          data={"chat_id": str(chat_id), "caption": caption[:1000]},
-                          files={"photo": ("img.jpg", img, "image/jpeg")}, timeout=60)
+        await client.post(f"{TG_API}/sendPhoto", data={"chat_id": str(chat_id), "caption": caption[:1000]},
+                          files={"photo": ("i.jpg", img, "image/jpeg")}, timeout=60)
     except Exception as e:
         log.warning("photo: %s", e)
 
@@ -192,57 +212,77 @@ async def tg_voice_bytes(file_id):
     return fr.content
 
 
-# ---------- Prompt ----------
-def system_prompt(profile):
-    now = datetime.now(TZ).strftime("%Y-%m-%d %H:%M (%A)")
-    return (
-        "אתה מרדי, העוזר האישי של מרדכי בטלגרם. ענה תמיד ורק בעברית, קצר וישיר וחם.\n"
-        "בצע מיד בלי לשאול אישורים מיותרים. אם הבקשה ברורה - פשוט תעשה ותאשר בקצרה.\n"
-        f"השעה הנוכחית בישראל: {now}.\n"
-        f"מה שאתה כבר יודע על מרדכי: {profile or 'עדיין כלום'}.\n\n"
-        "יש לך גישה מלאה לאינטרנט בזמן אמת. כלים (השתמש בשורה נפרדת, אל תסביר עליהם למשתמש):\n"
-        "• חיפוש: לכל שאלה שתלויה במידע עדכני (חדשות, מזג אוויר, מחירים, ספורט, אירועים, שעות פתיחה, "
-        "כל עובדה שעלולה להשתנות או שאינך בטוח בה ב-100%) כתוב **רק** את השורה: SEARCH|מה לחפש - ותקבל תוצאות.\n"
-        "• תזכורת: REMINDER|מתי|טקסט קצר. ל'עוד X דקות/שעות' כתוב +דקות (למשל +5 לחמש דקות, +90 לשעה וחצי). "
-        "לזמן מוחלט (מחר, שעה ספציפית, תאריך) כתוב ISO: YYYY-MM-DDTHH:MM. אחר כך אשר בעברית 'אזכיר לך ...'.\n"
-        "• עובדה לזיכרון קבוע: FACT|העובדה  (שמור כל פרט קבוע על מרדכי - שם, משפחה, עבודה, העדפות, אנשים, הרגלים, תאריכים).\n"
-        "• תמונה: IMAGE|כיוון|prompt מפורט באנגלית. כיוון = square/portrait/landscape (לפי מה שמתאים). "
-        "כתוב prompt עשיר ומפורט; אם מבקשים ריאליסטי הוסף תיאור צילומי מפורט.\n"
-        "שורות הכלים פנימיות - לעולם אל תציג אותן בשיחה."
-    )
-
-
-RE_REM = re.compile(r"^REMINDER\|([^|]+)\|(.+)$", re.MULTILINE)
-RE_FACT = re.compile(r"^FACT\|(.+)$", re.MULTILINE)
-RE_SEARCH = re.compile(r"^SEARCH\|(.+)$", re.MULTILINE)
-RE_IMG = re.compile(r"^IMAGE\|(.+)$", re.MULTILINE)
-
-
-def parse_when(when: str):
-    """Relative '+5' (minutes) computed in code (reliable), else ISO datetime."""
-    when = when.strip()
-    if when.startswith("+"):
+# ---------- Reminders ----------
+def parse_when(when):
+    when = str(when).strip()
+    if when.startswith("+") or re.fullmatch(r"\d+", when):
         return datetime.now(TZ) + timedelta(minutes=int(re.sub(r"[^0-9]", "", when) or "0"))
     dt = datetime.fromisoformat(when)
     return dt if dt.tzinfo else dt.replace(tzinfo=TZ)
 
 
 def rem_buttons(rid):
-    return [[
-        {"text": "⏰ +10 דק'", "callback_data": f"snz:10:{rid}"},
-        {"text": "⏰ +1 שעה", "callback_data": f"snz:60:{rid}"},
-        {"text": "✓ בוצע", "callback_data": f"done:{rid}"},
-    ]]
+    return [[{"text": "⏰ +10 דק'", "callback_data": f"snz:10:{rid}"},
+             {"text": "⏰ +1 שעה", "callback_data": f"snz:60:{rid}"},
+             {"text": "✓ בוצע", "callback_data": f"done:{rid}"}]]
 
 
 async def add_reminder(chat_id, dt, text):
     rid = secrets.token_hex(3)
     async with rem_lock:
         rems = await _load("reminders.json", [])
-        rems.append({"id": rid, "fire_at": dt.astimezone(TZ).isoformat(),
-                     "text": text, "sent": False, "chat_id": chat_id})
+        rems.append({"id": rid, "fire_at": dt.astimezone(TZ).isoformat(), "text": text, "sent": False, "chat_id": chat_id})
         await _save("reminders.json", rems)
+    log.info("reminder set %s -> %s", dt.strftime("%H:%M"), text)
     return rid
+
+
+async def save_fact(fact):
+    async with mem_lock:
+        mem = await _load("memory.json", {"profile": "", "messages": []})
+        ex = mem.get("profile", "").split(" | ") if mem.get("profile") else []
+        if fact not in ex:
+            ex.append(fact)
+        mem["profile"] = " | ".join(ex[-60:])
+        await _save("memory.json", mem)
+
+
+# ---------- Tool execution ----------
+async def exec_tool(name, args, chat_id):
+    try:
+        if name == "set_reminder":
+            dt = parse_when(args["when"])
+            await add_reminder(chat_id, dt, args.get("text", "תזכורת"))
+            return f"נקבעה תזכורת ל-{dt.strftime('%Y-%m-%d %H:%M')}"
+        if name == "generate_image":
+            await tg_action(chat_id, "upload_photo")
+            img = await gen_image(args["prompt"], args.get("orientation", "square"))
+            await tg_photo(chat_id, img, "🎨")
+            return "התמונה נוצרה ונשלחה למרדכי בהצלחה."
+        if name == "web_search":
+            await tg_action(chat_id, "typing")
+            return await web_search(args["query"])
+        if name == "save_fact":
+            await save_fact(args["fact"])
+            return "נשמר בזיכרון."
+    except Exception as e:
+        log.warning("tool %s err: %s", name, e)
+        return f"שגיאה בכלי {name}."
+    return "כלי לא מוכר."
+
+
+def system_prompt(profile):
+    now = datetime.now(TZ).strftime("%Y-%m-%d %H:%M (%A)")
+    return (
+        "אתה מרדי, העוזר האישי של מרדכי בטלגרם. ענה תמיד ורק בעברית, קצר וישיר וחם.\n"
+        "בצע מיד בלי לשאול אישורים מיותרים. יש לך כלים אמיתיים - השתמש בהם:\n"
+        "- כשמבקשים תזכורת → קרא ל-set_reminder.\n"
+        "- כשמבקשים תמונה → קרא ל-generate_image.\n"
+        "- כששאלה תלויה במידע עדכני → קרא ל-web_search.\n"
+        "- כשלומד פרט קבוע על מרדכי → קרא ל-save_fact.\n"
+        f"השעה הנוכחית בישראל: {now}.\n"
+        f"מה שאתה כבר יודע על מרדכי: {profile or 'עדיין כלום'}."
+    )
 
 
 async def handle_message(chat_id, text):
@@ -251,67 +291,39 @@ async def handle_message(chat_id, text):
     profile = mem.get("profile", "")
     history = mem.get("messages", [])[-MAX_HISTORY:]
 
-    msgs = [{"role": "system", "content": system_prompt(profile)}] + history + [{"role": "user", "content": text}]
-    reply = await llm(msgs)
+    messages = [{"role": "system", "content": system_prompt(profile)}] + history + [{"role": "user", "content": text}]
 
-    sm = RE_SEARCH.search(reply)
-    if sm:
-        await tg_action(chat_id, "typing")
-        results = await web_search(sm.group(1).strip())
-        msgs.append({"role": "assistant", "content": reply})
-        msgs.append({"role": "user", "content": f"תוצאות חיפוש עדכניות:\n{results}\n\nענה למרדכי בעברית קצר וברור על סמך זה."})
-        reply = await llm(msgs)
+    final = ""
+    for _ in range(4):  # tool rounds
+        msg = await llm_call(messages, tools=TOOLS)
+        tcs = msg.get("tool_calls")
+        if tcs:
+            messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": tcs})
+            for tc in tcs:
+                fn = tc["function"]["name"]
+                try:
+                    args = json.loads(tc["function"].get("arguments") or "{}")
+                except Exception:
+                    args = {}
+                result = await exec_tool(fn, args, chat_id)
+                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+            continue
+        final = (msg.get("content") or "").strip()
+        break
 
-    im = RE_IMG.search(reply)
-    if im:
-        await tg_action(chat_id, "upload_photo")
-        spec = im.group(1).strip()
-        if "|" in spec:
-            orient, iprompt = spec.split("|", 1)
-            orient = orient.strip().lower()
-        else:
-            orient, iprompt = "square", spec
-        if orient not in DIMS:
-            orient = "square"
-        try:
-            await tg_photo(chat_id, await gen_image(iprompt.strip(), orient), "🎨")
-        except Exception as e:
-            log.warning("img: %s", e)
-            await tg_send(chat_id, "לא הצלחתי ליצור את התמונה כרגע, נסה שוב.")
-
-    for m in RE_REM.finditer(reply):
-        try:
-            await add_reminder(chat_id, parse_when(m.group(1)), m.group(2).strip())
-        except Exception as e:
-            log.warning("bad reminder: %s", e)
-
-    new_facts = [m.group(1).strip() for m in RE_FACT.finditer(reply)]
-
-    clean = RE_REM.sub("", reply)
-    clean = RE_FACT.sub("", clean)
-    clean = RE_IMG.sub("", clean)
-    clean = RE_SEARCH.sub("", clean).strip()
-    if clean:
-        await tg_send(chat_id, clean)
-    elif not im:
-        await tg_send(chat_id, "✅")
+    if final:
+        await tg_send(chat_id, final)
 
     async with mem_lock:
         mem = await _load("memory.json", {"profile": "", "messages": []})
-        hist = mem.get("messages", [])
-        hist.append({"role": "user", "content": text})
-        hist.append({"role": "assistant", "content": clean or "[תמונה]"})
-        mem["messages"] = hist[-MAX_HISTORY:]
-        if new_facts:
-            ex = mem.get("profile", "").split(" | ") if mem.get("profile") else []
-            for f in new_facts:
-                if f and f not in ex:
-                    ex.append(f)
-            mem["profile"] = " | ".join(ex[-60:])
+        h = mem.get("messages", [])
+        h.append({"role": "user", "content": text})
+        h.append({"role": "assistant", "content": final or "[פעולה בוצעה]"})
+        mem["messages"] = h[-MAX_HISTORY:]
         await _save("memory.json", mem)
 
 
-# ---------- Callback (buttons) ----------
+# ---------- Callbacks ----------
 async def handle_callback(cb):
     data = cb.get("data", "")
     cb_id = cb["id"]
@@ -333,7 +345,7 @@ async def handle_callback(cb):
     await tg_answer_cb(cb_id)
 
 
-# ---------- Reminders ----------
+# ---------- Reminder firing ----------
 async def check_reminders():
     async with rem_lock:
         rems = await _load("reminders.json", [])
@@ -349,17 +361,15 @@ async def check_reminders():
                 fired = True
                 continue
             if fire <= now:
-                rid = r.get("id", secrets.token_hex(3))
-                await tg_send(r.get("chat_id", ALLOWED_USER), f"⏰ תזכורת: {r['text']}", buttons=rem_buttons(rid))
+                await tg_send(r.get("chat_id", ALLOWED_USER), f"⏰ תזכורת: {r['text']}",
+                              buttons=rem_buttons(r.get("id", secrets.token_hex(3))))
                 r["sent"] = True
                 fired = True
-                log.info("fired: %s", r["text"])
+                log.info("FIRED: %s", r["text"])
         if fired:
-            keep = []
+            keep = [r for r in rems if not r.get("sent")]
             for r in rems:
-                if not r.get("sent"):
-                    keep.append(r)
-                else:
+                if r.get("sent"):
                     try:
                         if (now - datetime.fromisoformat(r["fire_at"])).total_seconds() < 86400:
                             keep.append(r)
@@ -430,7 +440,7 @@ async def route(chat_id, msg):
                 async with mem_lock:
                     cur = await _load("memory.json", {})
                     await _save("memory.json", {"profile": cur.get("profile", ""), "messages": []})
-            await tg_send(chat_id, "היי מרדכי! אני מרדי 🤖\nאני מחובר לאינטרנט - יכול לחפש מידע עדכני, ליצור תמונות, לקבוע תזכורות (עם דחייה), ולזכור אותך לאורך זמן. מה תרצה?")
+            await tg_send(chat_id, "היי מרדכי! אני מרדי 🤖 - תזכורות, תמונות, חיפוש באינטרנט וזיכרון. מה תרצה?")
             return
         await handle_message(chat_id, text)
     except Exception as e:
