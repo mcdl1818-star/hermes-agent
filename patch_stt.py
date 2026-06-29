@@ -45,3 +45,17 @@ if G_OLD not in jsrc:
     sys.exit("PATCH FAILED: ONESHOT_GRACE_SECONDS anchor not found - upstream changed")
 open(JOBS_PATH, "w", encoding="utf-8").write(jsrc.replace(G_OLD, G_NEW, 1))
 print("OK: widened one-shot reminder grace to 1800s")
+
+# --- Patch 3: disable per-turn background self-improvement review ---
+# It fires an extra LLM call (or two) after every message. On free tiers with a
+# 5-requests/minute cap (Cerebras), this starves the next user message and the
+# cron reminder firing, causing 429->Groq->413 cascades. Foreground memory tool
+# still works, so the agent can still save facts during a turn.
+TF_PATH = "/hermes-agent/agent/turn_finalizer.py"
+T_OLD = "    if final_response and not interrupted and (_should_review_memory or _should_review_skills):"
+T_NEW = "    if False and final_response and not interrupted and (_should_review_memory or _should_review_skills):  # disabled to conserve free-tier RPM"
+tsrc = open(TF_PATH, encoding="utf-8").read()
+if T_OLD not in tsrc:
+    sys.exit("PATCH FAILED: background review anchor not found - upstream changed")
+open(TF_PATH, "w", encoding="utf-8").write(tsrc.replace(T_OLD, T_NEW, 1))
+print("OK: disabled per-turn background review")
