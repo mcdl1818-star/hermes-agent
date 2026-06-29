@@ -1,31 +1,10 @@
 FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y \
-    curl git ffmpeg ripgrep build-essential ca-certificates \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
 
-RUN pip install --no-cache-dir uv
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-RUN git clone --depth=1 https://github.com/NousResearch/hermes-agent.git /hermes-agent
+COPY app.py .
 
-WORKDIR /hermes-agent
-
-RUN uv pip install --system -e ".[messaging,cli]" --no-cache
-
-# Free web search backend (DuckDuckGo, no API key needed) for productivity skills
-RUN uv pip install --system ddgs --no-cache
-
-RUN mkdir -p /root/.hermes
-
-# Patch Groq STT to force Hebrew transcription (Groq API accepts language; Hermes omits it)
-COPY patch_stt.py /patch_stt.py
-RUN python3 /patch_stt.py
-
-COPY start.sh /start.sh
-RUN chmod +x /start.sh
-
-EXPOSE 7860
-
-CMD ["/start.sh"]
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-10000}"]
