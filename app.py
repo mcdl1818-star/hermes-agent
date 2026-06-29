@@ -104,16 +104,24 @@ async def web_search(q):
 
 
 # ---------- Image generation (FLUX via HuggingFace) ----------
-async def gen_image(prompt):
+DIMS = {"square": (1024, 1024), "portrait": (832, 1216), "landscape": (1216, 832)}
+QUALITY = ", highly detailed, sharp focus, professional, cinematic lighting, 8k"
+REALISM = ", photorealistic, ultra realistic, DSLR photo, natural lighting, lifelike, high detail"
+
+
+async def gen_image(prompt, orientation="square"):
+    w, h = DIMS.get(orientation, DIMS["square"])
+    low = prompt.lower()
+    full = prompt + (REALISM if any(k in low for k in ("photo", "realis", "real ", "person", "portrait", "man", "woman", "face")) else QUALITY)
     for model in IMAGE_MODELS:
         for attempt in range(3):
             try:
                 r = await client.post(f"https://router.huggingface.co/hf-inference/models/{model}",
                                       headers={"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"},
-                                      json={"inputs": prompt}, timeout=120)
+                                      json={"inputs": full, "parameters": {"width": w, "height": h}}, timeout=120)
                 if r.status_code == 200 and r.content[:2] in (b"\xff\xd8", b"\x89P"):
                     return r.content
-                if r.status_code == 503:  # model loading
+                if r.status_code == 503:
                     await asyncio.sleep(8)
                     continue
                 log.warning("img %s: %s %s", model, r.status_code, r.text[:120])
@@ -195,17 +203,28 @@ def system_prompt(profile):
         "יש לך גישה מלאה לאינטרנט בזמן אמת. כלים (השתמש בשורה נפרדת, אל תסביר עליהם למשתמש):\n"
         "• חיפוש: לכל שאלה שתלויה במידע עדכני (חדשות, מזג אוויר, מחירים, ספורט, אירועים, שעות פתיחה, "
         "כל עובדה שעלולה להשתנות או שאינך בטוח בה ב-100%) כתוב **רק** את השורה: SEARCH|מה לחפש - ותקבל תוצאות.\n"
-        "• תזכורת: REMINDER|YYYY-MM-DDTHH:MM|טקסט קצר  (חשב לפי השעה בישראל; אשר 'אזכיר לך ב-HH:MM').\n"
+        "• תזכורת: REMINDER|מתי|טקסט קצר. ל'עוד X דקות/שעות' כתוב +דקות (למשל +5 לחמש דקות, +90 לשעה וחצי). "
+        "לזמן מוחלט (מחר, שעה ספציפית, תאריך) כתוב ISO: YYYY-MM-DDTHH:MM. אחר כך אשר בעברית 'אזכיר לך ...'.\n"
         "• עובדה לזיכרון קבוע: FACT|העובדה  (שמור כל פרט קבוע על מרדכי - שם, משפחה, עבודה, העדפות, אנשים, הרגלים, תאריכים).\n"
-        "• תמונה: IMAGE|prompt מפורט באנגלית  (כשמבקשים תמונה/ציור).\n"
+        "• תמונה: IMAGE|כיוון|prompt מפורט באנגלית. כיוון = square/portrait/landscape (לפי מה שמתאים). "
+        "כתוב prompt עשיר ומפורט; אם מבקשים ריאליסטי הוסף תיאור צילומי מפורט.\n"
         "שורות הכלים פנימיות - לעולם אל תציג אותן בשיחה."
     )
 
 
-RE_REM = re.compile(r"^REMINDER\|([0-9T:\-]+)\|(.+)$", re.MULTILINE)
+RE_REM = re.compile(r"^REMINDER\|([^|]+)\|(.+)$", re.MULTILINE)
 RE_FACT = re.compile(r"^FACT\|(.+)$", re.MULTILINE)
 RE_SEARCH = re.compile(r"^SEARCH\|(.+)$", re.MULTILINE)
 RE_IMG = re.compile(r"^IMAGE\|(.+)$", re.MULTILINE)
+
+
+def parse_when(when: str):
+    """Relative '+5' (minutes) computed in code (reliable), else ISO datetime."""
+    when = when.strip()
+    if when.startswith("+"):
+        return datetime.now(TZ) + timedelta(minutes=int(re.sub(r"[^0-9]", "", when) or "0"))
+    dt = datetime.fromisoformat(when)
+    return dt if dt.tzinfo else dt.replace(tzinfo=TZ)
 
 
 def rem_buttons(rid):
@@ -246,18 +265,23 @@ async def handle_message(chat_id, text):
     im = RE_IMG.search(reply)
     if im:
         await tg_action(chat_id, "upload_photo")
+        spec = im.group(1).strip()
+        if "|" in spec:
+            orient, iprompt = spec.split("|", 1)
+            orient = orient.strip().lower()
+        else:
+            orient, iprompt = "square", spec
+        if orient not in DIMS:
+            orient = "square"
         try:
-            await tg_photo(chat_id, await gen_image(im.group(1).strip()), "🎨")
+            await tg_photo(chat_id, await gen_image(iprompt.strip(), orient), "🎨")
         except Exception as e:
             log.warning("img: %s", e)
             await tg_send(chat_id, "לא הצלחתי ליצור את התמונה כרגע, נסה שוב.")
 
     for m in RE_REM.finditer(reply):
         try:
-            dt = datetime.fromisoformat(m.group(1))
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=TZ)
-            await add_reminder(chat_id, dt, m.group(2).strip())
+            await add_reminder(chat_id, parse_when(m.group(1)), m.group(2).strip())
         except Exception as e:
             log.warning("bad reminder: %s", e)
 
@@ -419,7 +443,7 @@ async def root():
     return "Mordi OK"
 
 
-@app.get("/tick")
+@app.api_route("/tick", methods=["GET", "HEAD"])
 async def tick():
     await check_reminders()
     return "tick"
