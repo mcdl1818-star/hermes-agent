@@ -249,26 +249,30 @@ async def save_fact(fact):
 
 # ---------- Tool execution ----------
 async def exec_tool(name, args, chat_id):
+    """Returns (user_reply_text, search_result_or_None). Non-search tools build
+    their own confirmation so no second LLM call is needed (saves rate limit)."""
     try:
         if name == "set_reminder":
             dt = parse_when(args["when"])
             await add_reminder(chat_id, dt, args.get("text", "תזכורת"))
-            return f"נקבעה תזכורת ל-{dt.strftime('%Y-%m-%d %H:%M')}"
+            today = datetime.now(TZ).date()
+            when_str = dt.strftime("%H:%M") if dt.date() == today else dt.strftime("%d/%m בשעה %H:%M")
+            return (f"✅ אזכיר לך ב-{when_str}: {args.get('text','')}", None)
         if name == "generate_image":
             await tg_action(chat_id, "upload_photo")
             img = await gen_image(args["prompt"], args.get("orientation", "square"))
             await tg_photo(chat_id, img, "🎨")
-            return "התמונה נוצרה ונשלחה למרדכי בהצלחה."
+            return ("", None)  # photo already sent
         if name == "web_search":
             await tg_action(chat_id, "typing")
-            return await web_search(args["query"])
+            return (None, await web_search(args["query"]))
         if name == "save_fact":
             await save_fact(args["fact"])
-            return "נשמר בזיכרון."
+            return ("", None)  # silent
     except Exception as e:
         log.warning("tool %s err: %s", name, e)
-        return f"שגיאה בכלי {name}."
-    return "כלי לא מוכר."
+        return (f"לא הצלחתי לבצע ({name}), נסה שוב.", None)
+    return ("", None)
 
 
 def system_prompt(profile):
@@ -293,23 +297,33 @@ async def handle_message(chat_id, text):
 
     messages = [{"role": "system", "content": system_prompt(profile)}] + history + [{"role": "user", "content": text}]
 
-    final = ""
-    for _ in range(4):  # tool rounds
-        msg = await llm_call(messages, tools=TOOLS)
-        tcs = msg.get("tool_calls")
-        if tcs:
-            messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": tcs})
-            for tc in tcs:
-                fn = tc["function"]["name"]
-                try:
-                    args = json.loads(tc["function"].get("arguments") or "{}")
-                except Exception:
-                    args = {}
-                result = await exec_tool(fn, args, chat_id)
-                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
-            continue
-        final = (msg.get("content") or "").strip()
-        break
+    msg = await llm_call(messages, tools=TOOLS)
+    tcs = msg.get("tool_calls")
+    final = (msg.get("content") or "").strip()
+
+    if tcs:
+        messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": tcs})
+        confirmations, searched = [], False
+        for tc in tcs:
+            fn = tc["function"]["name"]
+            try:
+                args = json.loads(tc["function"].get("arguments") or "{}")
+            except Exception:
+                args = {}
+            reply_txt, search_res = await exec_tool(fn, args, chat_id)
+            if search_res is not None:
+                searched = True
+                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": search_res})
+            else:
+                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": reply_txt or "בוצע"})
+                if reply_txt:
+                    confirmations.append(reply_txt)
+        if searched:
+            # one more call (no tools) to answer using search results
+            msg2 = await llm_call(messages)
+            final = (msg2.get("content") or "").strip()
+        else:
+            final = final or "\n".join(confirmations)
 
     if final:
         await tg_send(chat_id, final)
